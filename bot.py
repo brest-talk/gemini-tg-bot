@@ -23,7 +23,7 @@ async def handle_message(message: types.Message):
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=message.text
         )
         await message.answer(response.text or "Пустой ответ.")
