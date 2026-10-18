@@ -91,6 +91,13 @@ def get_chat_context(chat_id: int) -> str:
 
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
+    # Отсекаем старт в личных сообщениях
+    if message.chat.type == "private":
+        await message.answer(
+            "Привет! Я работаю только в общем чате Brest_TALK. Переходи туда! 👋"
+        )
+        return
+
     await message.answer(
         "Привет! Я Gemini 3.8 AI на связи. "
         "В группе обращайтесь ко мне через @тег, ответом (Reply), "
@@ -99,8 +106,9 @@ async def handle_start(message: types.Message):
 
 
 def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str]:
+    # Полностью игнорируем личные сообщения (не отвечаем и не тратим токены)
     if message.chat.type == "private":
-        return True, message.text or message.caption or ""
+        return False, ""
 
     text = message.text or message.caption or ""
 
