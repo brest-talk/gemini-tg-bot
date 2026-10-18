@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import asyncio
 from collections import deque
 from aiohttp import web
@@ -17,6 +18,41 @@ ai_client = genai.Client(api_key=GEMINI_KEY)
 
 # Буфер последних сообщений для каждого чата: {chat_id: deque(maxlen=20)}
 chat_buffers = {}
+
+# ====== НАСТРОЙКИ АНТИМАТА ======
+# Базовый список корней мата (можно дополнять)
+BAD_WORDS = [
+    "блять", "бляд", "пизд", "хуй", "хуе", "хуё", "ебать", 
+    "ебан", "ебуч", "сука", "мудак", "пидор", "педик"
+]
+
+# Список слов-исключений (нормальные слова, содержащие плохие корни)
+EXCEPTIONS = [
+    "оскорблять", "употреблять", "ослаблять", "расслаблять", 
+    "влюблять", "рублять", "страхуй", "психуй", "штрихуй", "сукачев"
+]
+
+def is_swear_message(text: str) -> bool:
+    """Проверяет текст на наличие мата с учетом исключений."""
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    # 1. Вырезаем слова-исключения из проверки
+    for exc in EXCEPTIONS:
+        text_lower = text_lower.replace(exc, "")
+        
+    # 2. Удаляем все символы, кроме букв (чтобы ловить мат через точки/пробелы)
+    text_clean = re.sub(r'[^а-яёa-z]', '', text_lower)
+    
+    # 3. Ищем матерные корни
+    for word in BAD_WORDS:
+        if word in text_clean:
+            return True
+            
+    return False
+# ================================
 
 SYSTEM_PROMPT = """
 РОЛЬ:
@@ -72,7 +108,6 @@ config = genai_types.GenerateContentConfig(
     tools=[{"google_search": {}}]
 )
 
-
 def add_to_buffer(chat_id: int, user_name: str, text: str):
     """Фоновое сохранение сообщения в память без вызова API."""
     if not text:
@@ -81,13 +116,11 @@ def add_to_buffer(chat_id: int, user_name: str, text: str):
         chat_buffers[chat_id] = deque(maxlen=20)
     chat_buffers[chat_id].append(f"{user_name}: {text}")
 
-
 def get_chat_context(chat_id: int) -> str:
     """Формирует текстовый лог беседы из памяти."""
     if chat_id not in chat_buffers or not chat_buffers[chat_id]:
         return ""
     return "\n".join(chat_buffers[chat_id])
-
 
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
@@ -104,9 +137,8 @@ async def handle_start(message: types.Message):
         "словом 'Бот' или поставив в конце вопроса два вопросительных знака (??)."
     )
 
-
 def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str]:
-    # Полностью игнорируем личные сообщения (не отвечаем и не тратим токены)
+    # Полностью игнорируем личные сообщения
     if message.chat.type == "private":
         return False, ""
 
@@ -129,13 +161,23 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
     return False, ""
 
-
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
     caption_text = message.caption or ""
+
+    # Проверка на мат в подписи к фото
+    if is_swear_message(caption_text):
+        try:
+            await message.delete()
+            warning = await message.answer(f"{user_name}, давайте без мата! 🤫")
+            await asyncio.sleep(5)
+            await warning.delete()
+        except Exception as e:
+            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
+        return
 
     need_answer, prompt = should_respond(message, bot_info.username)
 
@@ -177,13 +219,23 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка при анализе фото: {e}")
 
-
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
     text = message.text.strip()
+
+    # Проверка на мат в тексте сообщения
+    if is_swear_message(text):
+        try:
+            await message.delete()
+            warning = await message.answer(f"{user_name}, в нашем чате мат запрещен! 🤫")
+            await asyncio.sleep(5)
+            await warning.delete()
+        except Exception as e:
+            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
+        return
 
     need_answer, prompt = should_respond(message, bot_info.username)
 
@@ -215,7 +267,6 @@ async def handle_text(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка: {e}")
 
-
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
@@ -225,11 +276,9 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-
 async def main():
     await start_web_server()
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
