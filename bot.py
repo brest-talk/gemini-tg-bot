@@ -219,10 +219,21 @@ async def handle_text(message: types.Message):
     await bot.send_chat_action(chat_id=chat_id, action="typing")
     context = get_chat_context(chat_id)
     
-    if context:
-        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
+    # --- ЛОГИКА ДЛЯ ЧТЕНИЯ СООБЩЕНИЙ ИЗ ШОРТКАТОВ ---
+    reply_text = ""
+    if message.reply_to_message:
+        reply_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+        
+    if reply_text:
+        reply_block = f"\n[ВНИМАНИЕ: Пользователь отвечает на это сообщение: «{reply_text}»]"
     else:
-        final_prompt = f"Текущее обращение от {user_name} (ID: {user_id}): {prompt}"
+        reply_block = ""
+        
+    if context:
+        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
+    else:
+        final_prompt = f"{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}".strip()
+    # --------------------------------------------------------
         
     try:
         response = ai_client.models.generate_content(
@@ -236,6 +247,7 @@ async def handle_text(message: types.Message):
         await message.reply(answer_text, parse_mode="Markdown")
     except Exception as e:
         await message.reply(f"Ошибка: {e}")
+
 
 async def start_web_server():
     app = web.Application()
