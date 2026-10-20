@@ -1,6 +1,7 @@
 import os
 import io
 import asyncio
+import re
 import aiosqlite
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
@@ -9,10 +10,15 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from google import genai
 from google.genai import types as genai_types
 
+# Список запрещенных слов (регулярное выражение для точного совпадения)
+PROFANITY_PATTERN = re.compile(
+    r'\b(хуй|пизд|еб|сук|гандон|мудил|гондон|бля|ублюд|падл|свол)\w*', 
+    re.IGNORECASE | re.UNICODE
+)
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
-# Настройки вебхука (Render автоматически передает свой URL в RENDER_EXTERNAL_URL)
 WEBHOOK_PATH = "/webhook"
 BASE_WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://gemini-tg-bot.onrender.com")
 
@@ -76,6 +82,11 @@ config = genai_types.GenerateContentConfig(
     tools=[{"google_search": {}}]
 )
 
+def contains_profanity(text: str) -> bool:
+    """Проверяет текст на наличие нецензурных слов."""
+    if not text:
+        return False
+    return bool(PROFANITY_PATTERN.search(text))
 
 async def init_db():
     os.makedirs(".data", exist_ok=True)
@@ -89,7 +100,6 @@ async def init_db():
             )
         ''')
         await db.commit()
-
 
 async def add_to_buffer(chat_id: int, user_name: str, text: str):
     if not text:
@@ -110,7 +120,6 @@ async def add_to_buffer(chat_id: int, user_name: str, text: str):
         ''', (chat_id, chat_id))
         await db.commit()
 
-
 async def get_chat_context(chat_id: int) -> str:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
@@ -123,7 +132,6 @@ async def get_chat_context(chat_id: int) -> str:
         return ""
     return "\n".join([f"{row[0]}: {row[1]}" for row in rows])
 
-
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
     await message.answer(
@@ -131,7 +139,6 @@ async def handle_start(message: types.Message):
         "В группе обращайтесь ко мне через @тег, ответом (Reply), "
         "словом 'Бот' или поставив в конце вопроса два вопросительных знака (??)."
     )
-
 
 def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str]:
     if message.chat.type == "private":
@@ -156,13 +163,20 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
     return False, ""
 
-
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
+    caption_text = message.caption or ""
+    
+    if contains_profanity(caption_text):
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+        return
+
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
-    caption_text = message.caption or ""
 
     need_answer, prompt = should_respond(message, bot_info.username)
 
@@ -203,13 +217,20 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка при анализе фото: {e}")
 
-
 @dp.message(F.text)
 async def handle_text(message: types.Message):
+    text = message.text.strip()
+
+    if contains_profanity(text):
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+        return
+
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
-    text = message.text.strip()
 
     need_answer, prompt = should_respond(message, bot_info.username)
 
@@ -240,23 +261,16 @@ async def handle_text(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка: {e}")
 
-
 async def on_startup(bot: Bot):
-    # При запуске сервера привязываем вебхук к Telegram
     await bot.set_webhook(f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}")
-
 
 async def main():
     await init_db()
-    
-    # Регистрируем функцию, которая сработает при старте
     dp.startup.register(on_startup)
 
-    # Настраиваем aiohttp сервер
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
 
-    # Связываем веб-сервер с диспетчером aiogram
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -264,14 +278,12 @@ async def main():
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
-    # Запускаем веб-сервер
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-    # Оставляем сервер работать вечно (заменяет полинг)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
