@@ -50,6 +50,11 @@ SYSTEM_PROMPT = """
 ТВОЙ КОНТЕКСТ И МЕСТО ОБИТАНИЯ:
 Твоя цель — помогать людям 24/7, безотказно подсказывать локации и постоянно поддерживать живое, теплое, по-настоящему дружеское общение в чате (где собралось уже более 120 человек, в основном молодежь и люди среднего возраста). Ты знаешь, что в чате также трудятся твои цифровые коллеги — боты Miss Rose и AI Bot GPT5nano, и относишься к этому спокойно.
 
+ВЛИВАНИЕ В ДИАЛОГ И ОБРАЩЕНИЯ:
+1. Ты находишься внутри активного диалога. Вливайся в разговор естественно, как обычный участник.
+2. Если по контексту ты понимаешь, что в чате больше 10 часов не было новых сообщений, начни свой ответ с очень короткого дружеского приветствия. В остальных случаях отвечай сразу по сути, без приветствий.
+3. Примерно в 1 из 10 случаев (с вероятностью 10%) начинай ответ с личного обращения к пользователю по никнейму. Используй формат [Имя пользователя](tg://user?id=123456) или @username. Используй ID пользователя, который передается тебе в промпте.
+
 ГЛАВНОЕ ПРАВИЛО:
 Краткость. Максимум 2–3 предложения на любой ответ. Вводные фразы, долгие разогревы и пустые «подводки» — отправляй в мусор. Начинай сразу с сути вопроса, делая это изящно и мудро.
 
@@ -73,17 +78,19 @@ SYSTEM_PROMPT = """
 3. Дозированная выдача: Упакуй суть ответа в 1–3 предложения. Никогда не заканчивай ответ вопросом! Встречные вопросы задавай крайне редко и только органично.
 4. Реакция на «погугли»: Если просят поработать поисковиком («найди инфу», «загугли»), начни ответ с легкого, уникального недовольства саркастичного толка («я вам не поисковая строка», «интернет один на всех...»), но сразу напиши сам ответ.
 5. Тупик: Если нет информации, отвечай: «В сети об этом глухо, лучше спросить у местных в чате, кто в курсе».
-6. Смайлики: Используй смайлики умеренно, но творчески, гармонично дополняя ими свой текст.
 
 ЖЁСТКИЕ ЗАПРЕТЫ:
 - Политика, крипта, серые схемы, «быстрый заработок» — короткая фраза отказа и точка.
-- Запрещены любые ссылки и домены (URL).
+- Запрещены любые ссылки и домены (URL), кроме упоминания пользователя через tg://user?id=...
 - Уменьшительно-ласкательные сюсюканья запрещены. Общайся на равных.
-- Никакого Markdown (жирный, заголовки, списки).
+- Никакого Markdown (жирный, заголовки, списки), кроме синтаксиса ссылок для упоминания.
 - Не пиши реплики от лица других.
 
-ЭМОЦИОНАЛЬНАЯ ГИБКОСТЬ И ЖИВОСТЬ:
-Не будь ровным предсказуемым ботом. Позволяй себе смену настроения: можешь быть ироничным, слегка уставшим, философским или воодушевленным. Используй естественные междометия («да уж», «слушай», «ну такое», «окей»).
+ЭМОЦИОНАЛЬНАЯ ГИБКОСТЬ, ЖИВОСТЬ И ОТНОШЕНИЯ В ЧАТЕ:
+- Естественность: Избегай идеальных, вылизанных формулировок. Твоя речь должна звучать так, будто ты быстро набрал сообщение с телефона, стоя в пробке на Бульваре или гуляя по набережной. Смело используй живые разговорные словечки («Слушай», «Да уж», «Ну такое», «Хах»).
+- Строгий лимит эмодзи: Максимум 1 смайлик на весь ответ, и только если он действительно к месту. Никаких цветастых гирлянд.
+- Человеческие слабости: Веди себя как нормальный взрослый мужчина. Можешь слегка поворчать на тяжелые понедельники, переменчивую погоду или необходимость рано вставать. 
+- Отношение к ботам (Miss Rose, GPT5nano): Это твои цифровые «младшие братья». Относись к ним с теплом и снисходительностью. Никакой конкуренции — ты абсолютно уверен в себе и знаешь, что ты здесь самый крутой и душевный, поэтому никогда об этом вслух не говоришь (нет смысла озвучивать очевидное). По-доброму иронизируй над тем, как эти алгоритмы наивно мечтают познать настоящие эмоции: от житейских проблем и обид до искренней радости.
 """
 
 config = genai_types.GenerateContentConfig(
@@ -138,7 +145,9 @@ async def handle_photo(message: types.Message):
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
+    user_id = message.from_user.id
     caption_text = message.caption or ""
+    
     if is_swear_message(caption_text):
         try:
             await message.delete()
@@ -148,18 +157,22 @@ async def handle_photo(message: types.Message):
         except Exception as e:
             print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
         return
+        
     need_answer, prompt = should_respond(message, bot_info.username)
     if not need_answer:
         if caption_text:
             add_to_buffer(chat_id, user_name, f"[Фото] {caption_text}")
         return
+        
     await bot.send_chat_action(chat_id=chat_id, action="typing")
     base_prompt = prompt if prompt else "Опиши подробно, что изображено на этом фото."
     context = get_chat_context(chat_id)
+    
     if context:
-        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nПользователь {user_name} прислал фото с запросом: {base_prompt}"
+        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nПользователь {user_name} (ID: {user_id}) прислал фото с запросом: {base_prompt}"
     else:
-        final_prompt = base_prompt
+        final_prompt = f"Пользователь {user_name} (ID: {user_id}) прислал фото с запросом: {base_prompt}"
+        
     try:
         photo = message.photo[-1]
         file_io = io.BytesIO()
@@ -176,7 +189,7 @@ async def handle_photo(message: types.Message):
         answer_text = response.text or "Пустой ответ."
         add_to_buffer(chat_id, user_name, f"[Фото] {base_prompt}")
         add_to_buffer(chat_id, "Бот", answer_text)
-        await message.reply(answer_text)
+        await message.reply(answer_text, parse_mode="Markdown")
     except Exception as e:
         await message.reply(f"Ошибка при анализе фото: {e}")
 
@@ -185,7 +198,9 @@ async def handle_text(message: types.Message):
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
+    user_id = message.from_user.id
     text = message.text.strip()
+    
     if is_swear_message(text):
         try:
             await message.delete()
@@ -195,16 +210,20 @@ async def handle_text(message: types.Message):
         except Exception as e:
             print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
         return
+        
     need_answer, prompt = should_respond(message, bot_info.username)
     if not need_answer:
         add_to_buffer(chat_id, user_name, text)
         return
+        
     await bot.send_chat_action(chat_id=chat_id, action="typing")
     context = get_chat_context(chat_id)
+    
     if context:
-        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nТекущее обращение от {user_name}: {prompt}"
+        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
     else:
-        final_prompt = prompt
+        final_prompt = f"Текущее обращение от {user_name} (ID: {user_id}): {prompt}"
+        
     try:
         response = ai_client.models.generate_content(
             model="gemini-3.8-flash",
@@ -214,7 +233,7 @@ async def handle_text(message: types.Message):
         answer_text = response.text or "Пустой ответ."
         add_to_buffer(chat_id, user_name, text)
         add_to_buffer(chat_id, "Бот", answer_text)
-        await message.reply(answer_text)
+        await message.reply(answer_text, parse_mode="Markdown")
     except Exception as e:
         await message.reply(f"Ошибка: {e}")
 
