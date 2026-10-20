@@ -10,9 +10,33 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from google import genai
 from google.genai import types as genai_types
 
-# Список запрещенных слов (регулярное выражение для точного совпадения)
-PROFANITY_PATTERN = re.compile(
-    r'\b(хуй|пизд|еб|сук|гандон|мудил|гондон|бля|ублюд|падл|свол)\w*', 
+# Список разрешенных чатов (только эти две группы)
+ALLOWED_CHATS = [-1004415639090, -1004392588464]
+
+# 1. Продвинутый паттерн для мата с пробелами, точками, переносами строк (х.у.й, х\nу\nй, п и з д а)
+SPACED_PROFANITY_PATTERN = re.compile(
+    r'(?:^|[^а-яёa-z])('
+    r'х[^а-яёa-z]*у[^а-яёa-z]*[йеёя]|'
+    r'п[^а-яёa-z]*и[^а-яёa-z]*з[^а-яёa-z]*д|'
+    r'б[^а-яёa-z]*л[^а-яёa-z]*я[^а-яёa-z]*[дт]|'
+    r'г[^а-яёa-z]*[ао][^а-яёa-z]*н[^а-яёa-z]*д[^а-яёa-z]*о[^а-яёa-z]*н|'
+    r'с[^а-яёa-z]*у[^а-яёa-z]*к[^а-яёa-z]*[аиу]|'
+    r'м[^а-яёa-z]*у[^а-яёa-z]*д[^а-яёa-z]*[аи]'
+    r')(?=[^а-яёa-z]|$)',
+    re.IGNORECASE | re.UNICODE
+)
+
+# 2. Классические слитные маты, включая приставки (нахуй, пиздец, уебан, заебал)
+STANDARD_PROFANITY_PATTERN = re.compile(
+    r'\b(?:'
+    r'(?:[нпзсв]?[аоиу]?х[ую][йеёя][а-яёa-z]*)|'
+    r'(?:[рнпзсвдовыт]*пизд[а-яёa-z]*)|'
+    r'(?:[рнпзсвдовыт]*[её]б[аилу][а-яёa-z]*)|'
+    r'(?:[выу]*бля[дт][а-яёa-z]*)|'
+    r'(?:г[ао]ндон[а-яёa-z]*)|'
+    r'(?:муд[аи][а-яёa-z]*)|'
+    r'(?:ублюд[а-яёa-z]*)'
+    r')\b',
     re.IGNORECASE | re.UNICODE
 )
 
@@ -83,10 +107,20 @@ config = genai_types.GenerateContentConfig(
 )
 
 def contains_profanity(text: str) -> bool:
-    """Проверяет текст на наличие нецензурных слов."""
     if not text:
         return False
-    return bool(PROFANITY_PATTERN.search(text))
+    
+    # Переводим в нижний регистр и заменяем английские буквы-обманки на русские
+    text = text.lower()
+    text = text.translate(str.maketrans('eaxopcy', 'еахорсу'))
+    
+    # Проверяем текст по обоим жестким алгоритмам
+    if SPACED_PROFANITY_PATTERN.search(text):
+        return True
+    if STANDARD_PROFANITY_PATTERN.search(text):
+        return True
+        
+    return False
 
 async def init_db():
     os.makedirs(".data", exist_ok=True)
@@ -132,18 +166,7 @@ async def get_chat_context(chat_id: int) -> str:
         return ""
     return "\n".join([f"{row[0]}: {row[1]}" for row in rows])
 
-@dp.message(CommandStart())
-async def handle_start(message: types.Message):
-    await message.answer(
-        "Привет! Я ИИ на связи. "
-        "В группе обращайтесь ко мне через @тег, ответом (Reply), "
-        "словом 'Бот' или поставив в конце вопроса два вопросительных знака (??)."
-    )
-
 def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str]:
-    if message.chat.type == "private":
-        return True, message.text or message.caption or ""
-
     text = message.text or message.caption or ""
 
     if message.reply_to_message and message.reply_to_message.from_user.id == bot.id:
@@ -163,7 +186,15 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
     return False, ""
 
-@dp.message(F.photo)
+@dp.message(CommandStart(), F.chat.id.in_(ALLOWED_CHATS))
+async def handle_start(message: types.Message):
+    await message.answer(
+        "Привет! Я ИИ на связи. "
+        "В группе обращайтесь ко мне через @тег, ответом (Reply), "
+        "словом 'Бот' или поставив в конце вопроса два вопросительных знака (??)."
+    )
+
+@dp.message(F.photo, F.chat.id.in_(ALLOWED_CHATS))
 async def handle_photo(message: types.Message):
     caption_text = message.caption or ""
     
@@ -217,7 +248,7 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка при анализе фото: {e}")
 
-@dp.message(F.text)
+@dp.message(F.text, F.chat.id.in_(ALLOWED_CHATS))
 async def handle_text(message: types.Message):
     text = message.text.strip()
 
