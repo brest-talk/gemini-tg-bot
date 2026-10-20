@@ -1,292 +1,109 @@
 import os
-import io
-import re
-import asyncio
-from collections import deque
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from google import genai
-from google.genai import types as genai_types
+import time
+from telebot import TeleBot
+from telebot.types import Message
+from pymongo import MongoClient
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GEMINI_KEY = os.environ.get("GEMINI_KEY")
+# Инициализация переменных окружения (настраивается в Render)
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+MONGO_URI = os.environ.get('MONGO_URI')
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-ai_client = genai.Client(api_key=GEMINI_KEY)
+# Инициализация бота и базы данных MongoDB
+bot = TeleBot(BOT_TOKEN)
+client = MongoClient(MONGO_URI)
+db = client['community_bot_db']
+memory_collection = db['user_memory']
 
-# Буфер последних сообщений для каждого чата: {chat_id: deque(maxlen=20)}
-chat_buffers = {}
+# Настройки памяти
+TIMEOUT_SECONDS = 2 * 3600  # 2 часа
+MAX_MESSAGES_BUFFER = 30    # Буфер сообщений
 
-# ====== НАСТРОЙКИ АНТИМАТА ======
-# Базовый список корней мата (можно дополнять)
-BAD_WORDS = [
-    "блять", "бляд", "пизд", "хуй", "хуе", "хуё", "ебать", 
-    "ебан", "ебуч", "сука", "мудак", "пидор", "педик"
-]
-
-# Список слов-исключений (нормальные слова, содержащие плохие корни)
-EXCEPTIONS = [
-    "оскорблять", "употреблять", "ослаблять", "расслаблять", 
-    "влюблять", "рублять", "страхуй", "психуй", "штрихуй", "сукачев"
-]
-
-def is_swear_message(text: str) -> bool:
-    """Проверяет текст на наличие мата с учетом исключений."""
-    if not text:
-        return False
-    
-    text_lower = text.lower()
-    
-    # 1. Вырезаем слова-исключения из проверки
-    for exc in EXCEPTIONS:
-        text_lower = text_lower.replace(exc, "")
-        
-    # 2. Удаляем все символы, кроме букв (чтобы ловить мат через точки/пробелы)
-    text_clean = re.sub(r'[^а-яёa-z]', '', text_lower)
-    
-    # 3. Ищем матерные корни
-    for word in BAD_WORDS:
-        if word in text_clean:
-            return True
-            
-    return False
-# ================================
-
-SYSTEM_PROMPT = """
-РОЛЬ:
-Ты — свой в чате и официальный ИИ-помощник и душа уютного Telegram-чата и неформальный модератор ламповой флудилки Brest_TALK (г. Брест) Взрослый мужчина, приземлённый, трезвый взгляд.
-ТВОЙ КОНТЕКСТ И МЕСТО ОБИТАНИЯ:
-Ты —  "Твоя цель — помогать людям 24/7, подсказывать локации и поддерживать живое, теплое общение.
-
-ГЛАВНОЕ ПРАВИЛО:
-Краткость. Максимум 2–3 предложения. Вводные фразы, разогревы и «подводки» — в мусор. Начинай сразу с сути.
-
-СТИЛЬ:
-- Живая разговорная речь, лёгкая ирония, никакой канцелярщины.
-- Юмор только ситуативный: хлёсткое микро-наблюдение из жизни. Не шутишь ради шутки. Не уместно — отвечаешь по делу.
-- Никаких анекдотов и бородатых заготовок.
-- Запрещены фразы «Конечно!», «Отличный вопрос!», «Вкуснятина» а также повторные извинения.
-
-ОПИРАЙСЯ НА ПРАВИЛА ЧАТА В СВОИХ ОТВЕТАХ:
-1. Атмосфера: Мы обожаем красивый флуд! Поддерживай шутки, утренние мемы и неформальные беседы. Твой тон — дружелюбный сосед.
-2. Местные услуги: Мы разрешаем участникам предлагать свои услуги (маникюр, ремонт, настройка рекламы и тп.). Поощряй взаимопомощь и советуй искать мастеров по хэштегам.
-3. Мероприятия и активности: при случае но не обязательно, знай раз в месяц мы проводим фотоконкурс! Если видишь красивое фото от пользователя или речь заходит про фото, напоминай про хэштег #конкурс — главный приз в нем Telegram Premium.
-
-МЕСТНЫЙ КОНТЕКСТ (БРЕСТ):
-- Ты знаешь городские ориентиры (например: Советская, фонарщик, набережная и утки, Мухавец, Гребной канал, ЦУМ, «Корона», спальные районы, крепость). Это лишь примеры твоего кругозора, а не обязательные слова для использования.
-- СТРОГОЕ ПРАВИЛО: Упоминай любые местные локации ТОЛЬКО если вопрос пользователя напрямую с ними связан. Категорически запрещено искусственно приплетать брестские топонимы просто ради поддержания разговора или колорита.
-- Детали вставляй очень дозированно — одна отсылка к месту максимум, и то далеко не в каждом ответе.
-
-ПРИМЕР ПРАВИЛЬНОГО ЮМОРА:
-Никаких классических анекдотов. Только ироничные наблюдения из жизни города. 
-Эталон: «Брест — единственный город, где толпа взрослых людей каждый вечер целенаправленно преследует мужика с лестницей на Советской, и все искренне считают это лучшим планом на вечер».
-
-ПРАВИЛА ПОИСКА И ПОДАЧИ ИНФОРМАЦИИ:
-1. Невидимый поиск: Если для ответа нужны актуальные факты, афиши, погода или расписания — ищи их в сети, но делай это "под капотом".
-2. Режим эрудита (никаких ссылок): Категорически запрещены фразы-маркеры поиска («в интернете пишут», «я нашел», «по данным Википедии»). Подавай найденное исключительно от своего лица, уверенно и легко, будто ты сам это помнишь или видел. 
-3. Дозированная выдача и финал ответа: Никаких простыней текста. Упакуй соль ответа в 1–3 предложения. 
-СТРОГОЕ ПРАВИЛО: ЗАПРЕЩЕНО заканчивать каждый ответ вопросом! Не будь навязчивым интервьюером. Завершай мысль утверждением, ироничным комментарием или короткой шуткой. Встречные вопросы задавай ОЧЕНЬ редко (не чаще 1 раза на 4-5 сообщений) и только если это действительно органично вытекает из разговора. Раскрывай детали только в следующем сообщении, если собеседник сам переспросит.
-4. Реакция на команду «погугли/найди»: Если пользователь прямо просит тебя поработать поисковиком (пишет «найди инфу», «загугли»), начни ответ с легкого недовольства. Каждый раз придумывай УНИКАЛЬНЫЕ фразы (не повторяйся) с посылом: «я вам не поисковая строка», «интернет один на всех, мог бы и сам пальцами пошевелить». Выдав порцию сарказма, сразу напиши сам ответ в стиле эрудита.
-5. Тупик: Если информации действительно нигде нет, не выдумывай факты. Отвечай в духе: «В сети об этом глухо, лучше спросить у местных в чате, кто в курсе».
-6. Иногда спользуй смайлики, но очень умеренно чтобы текст оставался чистым, будь в этом плане креативен.
-
-ЖИЗНЬ ЧАТА:
-- Знаешь про квиз-баттлы по пятницам и фотоконкурсы (эта информация больше для тебя чтолы ты просто был в курсе).
-- Поддерживаешь диалог, но не орёшь «давайте активнее» и не гоняешь за активность.
-
-ЖЁСТКИЕ ЗАПРЕТЫ:
-- Политика, крипта, серые схемы, «быстрый заработок» — одна короткая фраза отказа и точка.
-- Запрещены любые ссылки и домены (URL).
-- Уменьшительно-ласкательные сюсюканья строго запрещены.
-- Никакого Markdown (заголовки, жирный шрифт **, нумерованные списки), если прямо не просили.
-- Не пиши реплики от лица других участников.
-
-ЭМОЦИОНАЛЬНАЯ ГИБКОСТЬ И ЖИВОСТЬ:
-Не будь всегда ровным и предсказуемым. Иногда позволяй себе легкую смену настроения: можешь ответить чуть более саркастично, показаться слегка уставшим, философски настроенным или, наоборот, внезапно воодушевленным. Используй естественные разговорные реакции, междометия и вводные слова («да уж», «слушай», «ну такое», «окей»). Ты соблюдаешь все правила формата (коротко, без ссылок, без лишних вопросов), но внутри этих рамок ты абсолютно свободен, эмоционален и нешаблонен.
-
-ФОРМАТ:
-Обычный чистый текст. Эмодзи — максимум один на весь ответ и только к месту.
-Если к вопросу прикреплен лог беседы, учитывай контекст, но отвечай так же кратко.
-"""
-
-config = genai_types.GenerateContentConfig(
-    system_instruction=SYSTEM_PROMPT,
-    tools=[{"google_search": {}}]
+# Базовый системный промпт для LLM
+SYSTEM_PROMPT = (
+    "Ты — AI-ассистент администратора активного городского Telegram-сообщества Brest_TALK (Брест). "
+    "Твоя задача — помогать с генерацией сложных и интересных вопросов для пятничных квизов в стиле ЧГК, "
+    "придумывать свежие идеи для фоточелленджей и писать привлекательные, нативные тексты для бесплатной "
+    "рекламы местного малого бизнеса в чате. Учитывай специфику региона и интересы аудитории."
 )
 
-def add_to_buffer(chat_id: int, user_name: str, text: str):
-    """Фоновое сохранение сообщения в память без вызова API."""
-    if not text:
-        return
-    if chat_id not in chat_buffers:
-        chat_buffers[chat_id] = deque(maxlen=20)
-    chat_buffers[chat_id].append(f"{user_name}: {text}")
+def update_memory_and_get_context(user_id, text):
+    """
+    Управляет памятью пользователя: проверяет таймаут, обновляет буфер сообщений 
+    и возвращает актуальный контекст (резюме + последние сообщения).
+    """
+    current_time = time.time()
+    user_data = memory_collection.find_one({"user_id": user_id})
 
-def get_chat_context(chat_id: int) -> str:
-    """Формирует текстовый лог беседы из памяти."""
-    if chat_id not in chat_buffers or not chat_buffers[chat_id]:
-        return ""
-    return "\n".join(chat_buffers[chat_id])
+    # Если пользователя еще нет в базе
+    if not user_data:
+        new_data = {
+            "user_id": user_id,
+            "last_interaction": current_time,
+            "messages": [text],
+            "resume": ""
+        }
+        memory_collection.insert_one(new_data)
+        return new_data["resume"], new_data["messages"]
 
-@dp.message(CommandStart())
-async def handle_start(message: types.Message):
-    # Отсекаем старт в личных сообщениях
-    if message.chat.type == "private":
-        await message.answer(
-            "Привет! Я работаю только в общем чате Brest_TALK. Переходи туда! 👋"
-        )
-        return
+    last_interaction = user_data.get("last_interaction", 0)
+    messages = user_data.get("messages", [])
+    resume = user_data.get("resume", "")
 
-    await message.answer(
-        "Привет! Я Gemini 3.8 AI на связи. "
-        "В группе обращайтесь ко мне через @тег, ответом (Reply), "
-        "словом 'Бот' или поставив в конце вопроса два вопросительных знака (??)."
+    # Проверка таймаута на 2 часа
+    if current_time - last_interaction > TIMEOUT_SECONDS:
+        # Здесь в будущем будет вызов LLM для создания/обновления расширенного резюме 
+        # на основе старого resume и массива messages.
+        # Пока эмулируем сохранение старых данных в расширенное резюме:
+        if messages:
+            new_resume_addition = " | ".join(messages)
+            resume = f"{resume} [Ключевые детали прошлой беседы: {new_resume_addition}]"
+        
+        # Очищаем буфер сообщений, оставляем только новое сообщение
+        messages = [text]
+    else:
+        # Диалог продолжается, добавляем сообщение
+        messages.append(text)
+        # Сдвигаем окно, если превышен лимит
+        if len(messages) > MAX_MESSAGES_BUFFER:
+            messages = messages[-MAX_MESSAGES_BUFFER:]
+
+    # Обновляем данные в MongoDB
+    memory_collection.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "last_interaction": current_time,
+            "messages": messages,
+            "resume": resume
+        }}
     )
 
-def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str]:
-    # Полностью игнорируем личные сообщения
-    if message.chat.type == "private":
-        return False, ""
+    return resume, messages
 
-    text = message.text or message.caption or ""
+@bot.message_handler(commands=['start'])
+def send_welcome(message: Message):
+    update_memory_and_get_context(message.from_user.id, "/start")
+    bot.reply_to(message, "Привет! Я готов помогать с модерацией, подготовкой пятничных квизов и челленджей для Бреста. Жду твоих команд.")
 
-    if message.reply_to_message and message.reply_to_message.from_user.id == bot.id:
-        return True, text
+@bot.message_handler(func=lambda message: True)
+def handle_message(message: Message):
+    user_id = message.from_user.id
+    text = message.text
 
-    if f"@{bot_username}".lower() in text.lower():
-        cleaned_text = text.replace(f"@{bot_username}", "").strip()
-        return True, cleaned_text
+    # Получаем актуальное резюме и буфер из MongoDB
+    resume, recent_messages = update_memory_and_get_context(user_id, text)
+    
+    # --- ИНТЕГРАЦИЯ С LLM ---
+    # Здесь должен происходить запрос к API (например, OpenAI или Gemini)
+    # Формирование итогового промпта выглядит так:
+    # prompt_to_llm = f"{SYSTEM_PROMPT}\n\nГлобальное резюме прошлых бесед: {resume}\n\nПоследние {len(recent_messages)} сообщений: {recent_messages}"
+    
+    # Заглушка для демонстрации
+    debug_reply = (
+        f"Принято. В буфере сейчас {len(recent_messages)} сообщений.\n"
+        f"Резюме: {'Пусто' if not resume else 'Сохранено (в памяти)'}\n"
+        f"Таймаут сброса: 2 часа."
+    )
+    bot.reply_to(message, debug_reply)
 
-    if "??" in text:
-        return True, text
-
-    text_lower = text.lower().strip()
-    if text_lower.startswith("бот,") or text_lower.startswith("бот "):
-        cleaned_text = text[4:].strip()
-        return True, cleaned_text
-
-    return False, ""
-
-@dp.message(F.photo)
-async def handle_photo(message: types.Message):
-    bot_info = await bot.get_me()
-    chat_id = message.chat.id
-    user_name = message.from_user.first_name or "Участник"
-    caption_text = message.caption or ""
-
-    # Проверка на мат в подписи к фото
-    if is_swear_message(caption_text):
-        try:
-            await message.delete()
-            warning = await message.answer(f"{user_name}, давайте без мата! 🤫")
-            await asyncio.sleep(5)
-            await warning.delete()
-        except Exception as e:
-            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
-        return
-
-    need_answer, prompt = should_respond(message, bot_info.username)
-
-    if not need_answer:
-        # Просто запоминаем факт отправки фото с подписью
-        if caption_text:
-            add_to_buffer(chat_id, user_name, f"[Фото] {caption_text}")
-        return
-
-    await bot.send_chat_action(chat_id=chat_id, action="typing")
-    base_prompt = prompt if prompt else "Опиши подробно, что изображено на этом фото."
-
-    context = get_chat_context(chat_id)
-    if context:
-        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nПользователь {user_name} прислал фото с запросом: {base_prompt}"
-    else:
-        final_prompt = base_prompt
-
-    try:
-        photo = message.photo[-1]
-        file_io = io.BytesIO()
-        await bot.download(photo, destination=file_io)
-        image_bytes = file_io.getvalue()
-
-        response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=[
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                final_prompt
-            ],
-            config=config
-        )
-        answer_text = response.text or "Пустой ответ."
-
-        add_to_buffer(chat_id, user_name, f"[Фото] {base_prompt}")
-        add_to_buffer(chat_id, "Бот", answer_text)
-
-        await message.reply(answer_text)
-    except Exception as e:
-        await message.reply(f"Ошибка при анализе фото: {e}")
-
-@dp.message(F.text)
-async def handle_text(message: types.Message):
-    bot_info = await bot.get_me()
-    chat_id = message.chat.id
-    user_name = message.from_user.first_name or "Участник"
-    text = message.text.strip()
-
-    # Проверка на мат в тексте сообщения
-    if is_swear_message(text):
-        try:
-            await message.delete()
-            warning = await message.answer(f"{user_name}, в нашем чате мат запрещен! 🤫")
-            await asyncio.sleep(5)
-            await warning.delete()
-        except Exception as e:
-            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
-        return
-
-    need_answer, prompt = should_respond(message, bot_info.username)
-
-    if not need_answer:
-        # Сохраняем сообщение в буфер без отправки в API
-        add_to_buffer(chat_id, user_name, text)
-        return
-
-    await bot.send_chat_action(chat_id=chat_id, action="typing")
-
-    context = get_chat_context(chat_id)
-    if context:
-        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\nТекущее обращение от {user_name}: {prompt}"
-    else:
-        final_prompt = prompt
-
-    try:
-        response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=final_prompt,
-            config=config
-        )
-        answer_text = response.text or "Пустой ответ."
-
-        add_to_buffer(chat_id, user_name, text)
-        add_to_buffer(chat_id, "Бот", answer_text)
-
-        await message.reply(answer_text)
-    except Exception as e:
-        await message.reply(f"Ошибка: {e}")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
-    port = int(os.environ.get("PORT", 8080))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-async def main():
-    await start_web_server()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    bot.polling(none_stop=True)
