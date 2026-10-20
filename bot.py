@@ -5,11 +5,16 @@ import aiosqlite
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from google import genai
 from google.genai import types as genai_types
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
+
+# Настройки вебхука (Render автоматически передает свой URL в RENDER_EXTERNAL_URL)
+WEBHOOK_PATH = "/webhook"
+BASE_WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://gemini-tg-bot.onrender.com")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -73,7 +78,6 @@ config = genai_types.GenerateContentConfig(
 
 
 async def init_db():
-    """Создает папку и файл базы данных, если их нет."""
     os.makedirs(".data", exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
@@ -88,16 +92,13 @@ async def init_db():
 
 
 async def add_to_buffer(chat_id: int, user_name: str, text: str):
-    """Асинхронное сохранение сообщения в SQLite с лимитом 20 сообщений."""
     if not text:
         return
     async with aiosqlite.connect(DB_PATH) as db:
-        # Добавляем новое сообщение
         await db.execute(
             "INSERT INTO messages (chat_id, user_name, text) VALUES (?, ?, ?)",
             (chat_id, user_name, text)
         )
-        # Очищаем старые, оставляя только 20 последних
         await db.execute('''
             DELETE FROM messages 
             WHERE id NOT IN (
@@ -111,7 +112,6 @@ async def add_to_buffer(chat_id: int, user_name: str, text: str):
 
 
 async def get_chat_context(chat_id: int) -> str:
-    """Извлекает 20 последних сообщений из базы данных."""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT user_name, text FROM messages WHERE chat_id = ? ORDER BY id ASC",
@@ -187,7 +187,7 @@ async def handle_photo(message: types.Message):
         image_bytes = file_io.getvalue()
 
         response = await ai_client.aio.models.generate_content(
-            model="gemini-1.5-flash",  # Используем актуальную модель
+            model="gemini-3.8-flash",
             contents=[
                 genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 final_prompt
@@ -227,7 +227,7 @@ async def handle_text(message: types.Message):
 
     try:
         response = await ai_client.aio.models.generate_content(
-            model="gemini-1.5-flash",  # Используем актуальную модель
+            model="gemini-3.8-flash",
             contents=final_prompt,
             config=config
         )
@@ -241,20 +241,38 @@ async def handle_text(message: types.Message):
         await message.reply(f"Ошибка: {e}")
 
 
-async def start_web_server():
+async def on_startup(bot: Bot):
+    # При запуске сервера привязываем вебхук к Telegram
+    await bot.set_webhook(f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}")
+
+
+async def main():
+    await init_db()
+    
+    # Регистрируем функцию, которая сработает при старте
+    dp.startup.register(on_startup)
+
+    # Настраиваем aiohttp сервер
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
+
+    # Связываем веб-сервер с диспетчером aiogram
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    # Запускаем веб-сервер
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-
-async def main():
-    await init_db()  # Инициализация базы данных перед запуском
-    await start_web_server()
-    await dp.start_polling(bot)
+    # Оставляем сервер работать вечно (заменяет полинг)
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
