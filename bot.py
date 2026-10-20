@@ -18,12 +18,10 @@ memory_collection = db['user_memory']
 TIMEOUT_SECONDS = 2 * 3600  # 2 часа
 MAX_MESSAGES_BUFFER = 30    # Буфер сообщений
 
-# Базовый системный промпт для LLM
+# Универсальный системный промпт: теперь бот работает как помощник для любых чатов и задач
 SYSTEM_PROMPT = (
-    "Ты — AI-ассистент администратора активного городского Telegram-сообщества Brest_TALK (Брест). "
-    "Твоя задача — помогать с генерацией сложных и интересных вопросов для пятничных квизов в стиле ЧГК, "
-    "придумывать свежие идеи для фоточелленджей и писать привлекательные, нативные тексты для бесплатной "
-    "рекламы местного малого бизнеса в чате. Учитывай специфику региона и интересы аудитории."
+    "Ты — полезный и универсальный AI-ассистент. Твоя задача — помогать пользователям с любыми вопросами, "
+    "генерировать идеи, писать тексты, решать задачи и поддерживать общение в любых чатах и группах."
 )
 
 def update_memory_and_get_context(user_id, text):
@@ -51,9 +49,7 @@ def update_memory_and_get_context(user_id, text):
 
     # Проверка таймаута на 2 часа
     if current_time - last_interaction > TIMEOUT_SECONDS:
-        # Здесь в будущем будет вызов LLM для создания/обновления расширенного резюме 
-        # на основе старого resume и массива messages.
-        # Пока эмулируем сохранение старых данных в расширенное резюме:
+        # Эмулируем сохранение старых данных в расширенное резюме:
         if messages:
             new_resume_addition = " | ".join(messages)
             resume = f"{resume} [Ключевые детали прошлой беседы: {new_resume_addition}]"
@@ -82,7 +78,7 @@ def update_memory_and_get_context(user_id, text):
 @bot.message_handler(commands=['start'])
 def send_welcome(message: Message):
     update_memory_and_get_context(message.from_user.id, "/start")
-    bot.reply_to(message, "Привет! Я готов помогать с модерацией, подготовкой пятничных квизов и челленджей для Бреста. Жду твоих команд.")
+    bot.reply_to(message, "Привет! Я универсальный AI-ассистент. Готов помочь с любыми вопросами и задачами в этом чате. Жду твоих сообщений!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message: Message):
@@ -91,11 +87,6 @@ def handle_message(message: Message):
 
     # Получаем актуальное резюме и буфер из MongoDB
     resume, recent_messages = update_memory_and_get_context(user_id, text)
-    
-    # --- ИНТЕГРАЦИЯ С LLM ---
-    # Здесь должен происходить запрос к API (например, OpenAI или Gemini)
-    # Формирование итогового промпта выглядит так:
-    # prompt_to_llm = f"{SYSTEM_PROMPT}\n\nГлобальное резюме прошлых бесед: {resume}\n\nПоследние {len(recent_messages)} сообщений: {recent_messages}"
     
     # Заглушка для демонстрации
     debug_reply = (
