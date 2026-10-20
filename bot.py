@@ -1,3 +1,4 @@
+Готово. Удалил ту самую лишнюю строчку, которая ломала синтаксис. Копируй готовый код, вставляй и запускай:
 import os
 import io
 import re
@@ -209,7 +210,7 @@ async def handle_photo(message: types.Message):
         reply_block = f"\n[ВНИМАНИЕ: Пользователь отвечает на это сообщение: «{reply_text}»]"
     else:
         reply_block = ""
-        Чтобы бот начал отвечать, вставь этот кусок кода сразу после строки 212 с переменной reply_block:
+
     if context:
         final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\n{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
     else:
