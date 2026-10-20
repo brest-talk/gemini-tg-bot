@@ -194,6 +194,33 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка при анализе фото: {e}")
 
+@dp.message(F.text)
+async def handle_text(message: types.Message):
+    bot_info = await bot.get_me()
+    chat_id = message.chat.id
+    user_name = message.from_user.first_name or "Участник"
+    user_id = message.from_user.id
+    text = message.text.strip()
+    
+    if is_swear_message(text):
+        try:
+            await message.delete()
+            warning = await message.answer(f"{user_name}, в нашем чате мат запрещен! 🤫")
+            await asyncio.sleep(5)
+            await warning.delete()
+        except Exception as e:
+            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
+        return
+        
+    need_answer, prompt = should_respond(message, bot_info.username)
+    if not need_answer:
+        add_to_buffer(chat_id, user_name, text)
+        return
+        
+    await bot.send_chat_action(chat_id=chat_id, action="typing")
+    context = get_chat_context(chat_id)
+    
+    # --- ЛОГИКА ДЛЯ ЧТЕНИЯ СООБЩЕНИЙ ИЗ ШОРТКАТОВ (ИСПРАВЛЕНО ДЛЯ ОПРОСОВ) ---
     reply_text = ""
     if message.reply_to_message:
         if message.reply_to_message.text:
@@ -201,20 +228,21 @@ async def handle_photo(message: types.Message):
         elif message.reply_to_message.caption:
             reply_text = message.reply_to_message.caption
         elif message.reply_to_message.poll:
-            reply_text = f"Вопрос в опросе: {message.reply_to_message.poll.question}"
-            options_text = ", ".join([option.text for option in message.reply_to_message.poll.options])
-            reply_text += f"\nВарианты: {options_text}"
-
+            question = message.reply_to_message.poll.question
+            options = ", ".join([opt.text for opt in message.reply_to_message.poll.options])
+            reply_text = f"Опрос: {question} (Варианты: {options})"
+        
     if reply_text:
         reply_block = f"\n[ВНИМАНИЕ: Пользователь отвечает на это сообщение: «{reply_text}»]"
     else:
         reply_block = ""
-
+        
     if context:
-        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\n{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
+        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
     else:
-        final_prompt = f"{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
-
+        final_prompt = f"{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}".strip()
+    # ----------------------------------------------------------------------
+        
     try:
         response = ai_client.models.generate_content(
             model="gemini-3.8-flash",
@@ -222,14 +250,11 @@ async def handle_photo(message: types.Message):
             config=config
         )
         answer_text = response.text or "Пустой ответ."
-
         add_to_buffer(chat_id, user_name, text)
         add_to_buffer(chat_id, "Бот", answer_text)
-
         await message.reply(answer_text, parse_mode="Markdown")
     except Exception as e:
         await message.reply(f"Ошибка: {e}")
-
 
 
 async def start_web_server():
