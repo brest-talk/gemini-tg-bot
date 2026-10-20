@@ -209,6 +209,28 @@ async def handle_photo(message: types.Message):
         reply_block = f"\n[ВНИМАНИЕ: Пользователь отвечает на это сообщение: «{reply_text}»]"
     else:
         reply_block = ""
+        Чтобы бот начал отвечать, вставь этот кусок кода сразу после строки 212 с переменной reply_block:
+    if context:
+        final_prompt = f"Контекст недавней беседы в чате:\n{context}\n\n{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
+    else:
+        final_prompt = f"{reply_block}\nТекущее обращение от {user_name} (ID: {user_id}): {prompt}"
+
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=final_prompt,
+            config=config
+        )
+        answer_text = response.text or "Пустой ответ."
+
+        add_to_buffer(chat_id, user_name, text)
+        add_to_buffer(chat_id, "Бот", answer_text)
+
+        await message.reply(answer_text, parse_mode="Markdown")
+    except Exception as e:
+        await message.reply(f"Ошибка: {e}")
+
+
 
 async def start_web_server():
     app = web.Application()
