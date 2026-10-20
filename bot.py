@@ -13,30 +13,9 @@ from google.genai import types as genai_types
 # Список разрешенных чатов (только эти две группы)
 ALLOWED_CHATS = [-1004415639090, -1004392588464]
 
-# 1. Продвинутый паттерн для мата с пробелами, точками, переносами строк (х.у.й, х\nу\nй, п и з д а)
-SPACED_PROFANITY_PATTERN = re.compile(
-    r'(?:^|[^а-яёa-z])('
-    r'х[^а-яёa-z]*у[^а-яёa-z]*[йеёя]|'
-    r'п[^а-яёa-z]*и[^а-яёa-z]*з[^а-яёa-z]*д|'
-    r'б[^а-яёa-z]*л[^а-яёa-z]*я[^а-яёa-z]*[дт]|'
-    r'г[^а-яёa-z]*[ао][^а-яёa-z]*н[^а-яёa-z]*д[^а-яёa-z]*о[^а-яёa-z]*н|'
-    r'с[^а-яёa-z]*у[^а-яёa-z]*к[^а-яёa-z]*[аиу]|'
-    r'м[^а-яёa-z]*у[^а-яёa-z]*д[^а-яёa-z]*[аи]'
-    r')(?=[^а-яёa-z]|$)',
-    re.IGNORECASE | re.UNICODE
-)
-
-# 2. Классические слитные маты, включая приставки (нахуй, пиздец, уебан, заебал)
-STANDARD_PROFANITY_PATTERN = re.compile(
-    r'\b(?:'
-    r'(?:[нпзсв]?[аоиу]?х[ую][йеёя][а-яёa-z]*)|'
-    r'(?:[рнпзсвдовыт]*пизд[а-яёa-z]*)|'
-    r'(?:[рнпзсвдовыт]*[её]б[аилу][а-яёa-z]*)|'
-    r'(?:[выу]*бля[дт][а-яёa-z]*)|'
-    r'(?:г[ао]ндон[а-яёa-z]*)|'
-    r'(?:муд[аи][а-яёa-z]*)|'
-    r'(?:ублюд[а-яёa-z]*)'
-    r')\b',
+# Список запрещенных слов
+PROFANITY_PATTERN = re.compile(
+    r'\b(хуй|пизд|еб|сук|гандон|мудил|гондон|бля|ублюд|падл|свол)\w*', 
     re.IGNORECASE | re.UNICODE
 )
 
@@ -109,18 +88,7 @@ config = genai_types.GenerateContentConfig(
 def contains_profanity(text: str) -> bool:
     if not text:
         return False
-    
-    # Переводим в нижний регистр и заменяем английские буквы-обманки на русские
-    text = text.lower()
-    text = text.translate(str.maketrans('eaxopcy', 'еахорсу'))
-    
-    # Проверяем текст по обоим жестким алгоритмам
-    if SPACED_PROFANITY_PATTERN.search(text):
-        return True
-    if STANDARD_PROFANITY_PATTERN.search(text):
-        return True
-        
-    return False
+    return bool(PROFANITY_PATTERN.search(text))
 
 async def init_db():
     os.makedirs(".data", exist_ok=True)
@@ -186,6 +154,7 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
     return False, ""
 
+# Добавлен фильтр F.chat.id.in_(ALLOWED_CHATS) на все команды
 @dp.message(CommandStart(), F.chat.id.in_(ALLOWED_CHATS))
 async def handle_start(message: types.Message):
     await message.answer(
