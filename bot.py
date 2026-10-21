@@ -132,7 +132,7 @@ SYSTEM_PROMPT = """
 """
 
 config = genai_types.GenerateContentConfig(
-    system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
+    system_instruction=SYSTEM_PROMPT, tools=[{"google_search": {}}]
 )
 
 def add_to_buffer(chat_id: int, user_name: str, text: str):
@@ -179,6 +179,10 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
+    dynamic_system_prompt = get_system_prompt(user_name)
+config = genai_types.GenerateContentConfig(
+    system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
+)
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
@@ -232,6 +236,10 @@ async def handle_photo(message: types.Message):
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
+    dynamic_system_prompt = get_system_prompt(user_name)
+config = genai_types.GenerateContentConfig(
+    system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
+)
     bot_info = await bot.get_me()
     chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
