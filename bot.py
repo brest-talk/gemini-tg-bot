@@ -1,3 +1,40 @@
+import datetime
+
+# Храним дату последнего приветствия
+last_greeting_date = None
+
+
+def get_system_prompt(first_name):
+    global last_greeting_date
+
+    now = datetime.datetime.now()
+    current_date = now.date()
+    current_hour = now.hour
+
+    prompt_lines = [SYSTEM_PROMPT]
+
+    # Логика первого приветствия за день (после 06:00)
+    if current_hour >= 6 and last_greeting_date != current_date:
+        if 6 <= current_hour < 12:
+            time_context = "Доброе утро"
+        elif 12 <= current_hour < 18:
+            time_context = "Добрый день"
+        else:
+            time_context = "Привет / Добрый вечер"
+
+        # Даем команду поздороваться по имени
+        prompt_lines.append(
+            f"[СИСТЕМНО]: Это первое сообщение за сегодня. ОБЯЗАТЕЛЬНО начни ответ с приветствия: '{time_context}, {first_name}!' или 'Приветствую, {first_name}!'."
+        )
+
+        last_greeting_date = current_date
+    else:
+        prompt_lines.append(
+            "[СИСТЕМНО]: Диалог активен. Отвечай сразу по сути, БЕЗ приветствий."
+        )
+
+    return "\n".join(prompt_lines)
+
 import os
 import io
 import re
@@ -95,8 +132,7 @@ SYSTEM_PROMPT = """
 """
 
 config = genai_types.GenerateContentConfig(
-    system_instruction=SYSTEM_PROMPT,
-    tools=[{"google_search": {}}]
+    system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
 )
 
 def add_to_buffer(chat_id: int, user_name: str, text: str):
