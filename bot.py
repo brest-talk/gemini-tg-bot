@@ -180,7 +180,7 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     dynamic_system_prompt = get_system_prompt(user_name)
-config = genai_types.GenerateContentConfig(
+    config = genai_types.GenerateContentConfig(
     system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
 )
     bot_info = await bot.get_me()
@@ -237,7 +237,7 @@ config = genai_types.GenerateContentConfig(
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     dynamic_system_prompt = get_system_prompt(user_name)
-config = genai_types.GenerateContentConfig(
+    config = genai_types.GenerateContentConfig(
     system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
 )
     bot_info = await bot.get_me()
