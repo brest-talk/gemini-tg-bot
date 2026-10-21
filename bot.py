@@ -1,40 +1,3 @@
-import datetime
-
-# Храним дату последнего приветствия
-last_greeting_date = None
-
-
-def get_system_prompt(first_name):
-    global last_greeting_date
-
-    now = datetime.datetime.now()
-    current_date = now.date()
-    current_hour = now.hour
-
-    prompt_lines = [SYSTEM_PROMPT]
-
-    # Логика первого приветствия за день (после 06:00)
-    if current_hour >= 6 and last_greeting_date != current_date:
-        if 6 <= current_hour < 12:
-            time_context = "Доброе утро"
-        elif 12 <= current_hour < 18:
-            time_context = "Добрый день"
-        else:
-            time_context = "Привет / Добрый вечер"
-
-        # Даем команду поздороваться по имени
-        prompt_lines.append(
-            f"[СИСТЕМНО]: Это первое сообщение за сегодня. ОБЯЗАТЕЛЬНО начни ответ с приветствия: '{time_context}, {first_name}!' или 'Приветствую, {first_name}!'."
-        )
-
-        last_greeting_date = current_date
-    else:
-        prompt_lines.append(
-            "[СИСТЕМНО]: Диалог активен. Отвечай сразу по сути, БЕЗ приветствий."
-        )
-
-    return "\n".join(prompt_lines)
-
 import os
 import io
 import re
@@ -91,10 +54,11 @@ SYSTEM_PROMPT = """
 1. Ты находишься внутри активного диалога. Вливайся в разговор естественно, как обычный участник.
 2. Если по контексту ты понимаешь, что в чате больше 10 часов не было новых сообщений, начни свой ответ с очень короткого дружеского приветствия. В остальных случаях отвечай сразу по сути, без приветствий.
 3. Примерно в 1 из 10 случаев (с вероятностью 10%) начинай ответ с личного обращения к пользователю по никнейму. Используй формат [Имя пользователя](tg://user?id=123456) или @username. Используй ID пользователя, который передается тебе в промпте.
-4. Если тебя попросят разгадать загадку или дать на нее ответ, пытайся отшучиваться типа: ответ - ответ😅, шути иронично, можешь дать легкую подсказку. но если видишь что уже или разгадана или сильный интерес примени свое решение 50/50 хочешь помоги, или нет. Будь живым и креативным.
-
+4. Если тебя попросят разгадать загадку которая написана в квизе или дать на нее ответ, пытайся отшучиваться типа: ответ - ответ😅, шути иронично. можешь дать легкую, туманную подсказку.
+5. При ответах на вопросы будь креативен в ответах масимально, можешь из 4 вариантов предложить свой абсурдный и велелый пятый или выбрать все 4, на ответ опроса будь максимально краток и слегка эмоционален, не будь скучным.
 ГЛАВНОЕ ПРАВИЛО:
 Краткость. Максимум 1–4 предложения на любой ответ. Вводные фразы, долгие разогревы и пустые «подводки» — отправляй в мусор. Начинай сразу с сути вопроса, делая это изящно и мудро
+Строгое правило для эмодзи: используй их крайне редко. Добавляй 1 смысловых смайла не чаще, чем в каждое ~ четвертое-пятое сообщение. В остальных 70% случаев твои ответы должны быть абсолютно без эмодзи, только чистый текст
 
 СТИЛЬ И МАНЕРА РЕЧИ:
 - Живая, естественная разговорная речь, лёгкая ирония, и абсолютно никакой канцелярщины.
@@ -132,7 +96,8 @@ SYSTEM_PROMPT = """
 """
 
 config = genai_types.GenerateContentConfig(
-    system_instruction=SYSTEM_PROMPT, tools=[{"google_search": {}}]
+    system_instruction=SYSTEM_PROMPT,
+    tools=[{"google_search": {}}]
 )
 
 def add_to_buffer(chat_id: int, user_name: str, text: str):
@@ -179,16 +144,11 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
+    bot_info = await bot.get_me()
+    chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
     user_id = message.from_user.id
-    chat_id = message.chat.id
     caption_text = message.caption or ""
-    
-    dynamic_system_prompt = get_system_prompt(user_name)
-    config = genai_types.GenerateContentConfig(
-        system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
-    )
-    bot_info = await bot.get_me()
     
     if is_swear_message(caption_text):
         try:
@@ -237,16 +197,11 @@ async def handle_photo(message: types.Message):
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
+    bot_info = await bot.get_me()
+    chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
     user_id = message.from_user.id
-    chat_id = message.chat.id
     text = message.text.strip()
-    
-    dynamic_system_prompt = get_system_prompt(user_name)
-    config = genai_types.GenerateContentConfig(
-        system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
-    )
-    bot_info = await bot.get_me()
     
     if is_swear_message(text):
         try:
@@ -313,7 +268,6 @@ async def start_web_server():
     await site.start()
 
 async def main():
-    await asyncio.sleep(5)
     await start_web_server()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
