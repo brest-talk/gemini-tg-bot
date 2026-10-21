@@ -311,6 +311,7 @@ async def start_web_server():
     await site.start()
 
 async def main():
+    await asyncio.sleep(5)
     await start_web_server()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
