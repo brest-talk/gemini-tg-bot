@@ -179,15 +179,16 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    dynamic_system_prompt = get_system_prompt(user_name)
-    config = genai_types.GenerateContentConfig(
-    system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
-)
-    bot_info = await bot.get_me()
-    chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
     user_id = message.from_user.id
+    chat_id = message.chat.id
     caption_text = message.caption or ""
+    
+    dynamic_system_prompt = get_system_prompt(user_name)
+    config = genai_types.GenerateContentConfig(
+        system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
+    )
+    bot_info = await bot.get_me()
     
     if is_swear_message(caption_text):
         try:
@@ -236,15 +237,16 @@ async def handle_photo(message: types.Message):
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
-    dynamic_system_prompt = get_system_prompt(user_name)
-    config = genai_types.GenerateContentConfig(
-    system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
-)
-    bot_info = await bot.get_me()
-    chat_id = message.chat.id
     user_name = message.from_user.first_name or "Участник"
     user_id = message.from_user.id
+    chat_id = message.chat.id
     text = message.text.strip()
+    
+    dynamic_system_prompt = get_system_prompt(user_name)
+    config = genai_types.GenerateContentConfig(
+        system_instruction=dynamic_system_prompt, tools=[{"google_search": {}}]
+    )
+    bot_info = await bot.get_me()
     
     if is_swear_message(text):
         try:
