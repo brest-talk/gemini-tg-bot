@@ -7,6 +7,7 @@ from collections import deque
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google import genai
 from google.genai import types as genai_types
 
@@ -18,6 +19,18 @@ dp = Dispatcher()
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
 chat_buffers = {}
+
+# Таймер удаления сообщений: 5 часов (18 000 секунд)
+DELETE_DELAY_SECONDS = 5 * 60
+
+async def delete_after_delay(chat_id: int, message_id: int, delay_seconds: int = DELETE_DELAY_SECONDS):
+    """Ожидает заданное время и безопасно удаляет сообщение."""
+    await asyncio.sleep(delay_seconds)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        print(f"[AutoDelete] Сообщение {message_id} из чата {chat_id} успешно удалено.")
+    except Exception as e:
+        print(f"[AutoDelete] Не удалось удалить сообщение {message_id}: {e}")
 
 BAD_WORDS = [
     "блять", "бляд", "пизд", "хуй", "хуе", "хуё", "ебать", 
@@ -273,9 +286,64 @@ async def handle_text(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка: {e}")
 
+async def handle_post_webhook(request: web.Request):
+    """
+    Эндпоинт для приема сообщений из Apple Shortcuts.
+    Ожидает JSON в формате:
+    {
+        "chat_id": 123456789,
+        "text": "Текст сообщения",
+        "photo_url": "https://... (опционально)",
+        "button_text": "Посмотреть (опционально)",
+        "button_url": "https://t.me/... (опционально)"
+    }
+    """
+    try:
+        data = await request.json()
+        chat_id = data.get("chat_id")
+        text = data.get("text")
+        photo_url = data.get("photo_url")
+        button_text = data.get("button_text")
+        button_url = data.get("button_url")
+
+        if not chat_id or not text:
+            return web.json_response({"ok": False, "error": "chat_id and text are required"}, status=400)
+
+        reply_markup = None
+        if button_text and button_url:
+            reply_markup = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text=button_text, url=button_url)]]
+            )
+
+        if photo_url:
+            sent_msg = await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_url,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        else:
+            sent_msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+
+        # Запуск задачи на удаление сообщения через 5 часов
+        asyncio.create_task(
+            delete_after_delay(chat_id=sent_msg.chat.id, message_id=sent_msg.message_id)
+        )
+
+        return web.json_response({"ok": True, "message_id": sent_msg.message_id})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text="Bot is running!"))
+    app.router.add_post("/post", handle_post_webhook)
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
