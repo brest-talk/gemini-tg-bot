@@ -292,7 +292,8 @@ async def handle_text(message: types.Message):
 
 async def handle_post_webhook(request: web.Request):
     """
-    Эндпоинт для приема сообщений из Apple Shortcuts.
+    
+Эндпоинт для приема сообщений из Apple Shortcuts.
     Ожидает JSON в формате:
     {
         "chat_id": 123456789,
