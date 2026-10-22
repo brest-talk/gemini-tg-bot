@@ -21,7 +21,7 @@ ai_client = genai.Client(api_key=GEMINI_KEY)
 chat_buffers = {}
 
 # Таймер удаления сообщений: 5 часов (18 000 секунд)
-DELETE_DELAY_SECONDS = 5 * 14400
+DELETE_DELAY_SECONDS = 5 * 1440
 
 async def delete_after_delay(chat_id: int, message_id: int, delay_seconds: int = DELETE_DELAY_SECONDS):
     """Ожидает заданное время и безопасно удаляет сообщение."""
