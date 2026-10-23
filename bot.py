@@ -219,7 +219,7 @@ config = genai_types.GenerateContentConfig(
 
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
-    if message.chat.type == "private":
+    if message.chat.type == "private" and message.from_user.id != 6628087717:
         await message.answer(
             "Привет! Я работаю только в общем чате Brest_TALK. Переходи туда! 👋"
         )
@@ -232,6 +232,9 @@ async def handle_start(message: types.Message):
 
 def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str]:
     if message.chat.type == "private":
+        if message.from_user.id == 6628087717:
+            text = message.text or message.caption or ""
+            return True, text
         return False, ""
     text = message.text or message.caption or ""
     if message.reply_to_message and message.reply_to_message.from_user.id == bot.id:
@@ -246,6 +249,7 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
         cleaned_text = text[4:].strip()
         return True, cleaned_text
     return False, ""
+
 @dp.message(F.video | F.audio | F.voice | F.video_note)
 async def handle_media(message: types.Message):
     if message.chat.type == "private" and message.from_user.id != 6628087717:
