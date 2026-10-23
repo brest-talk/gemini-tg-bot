@@ -250,7 +250,7 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
         return True, cleaned_text
     return False, ""
 
-@dp.message(F.video | F.audio | F.voice | F.video_note)
+@dp.message(F.video | F.audio | F.voice | F.video_note | F.document)
 async def handle_media(message: types.Message):
     if message.chat.type == "private" and message.from_user.id != 6628087717:
         return
@@ -274,7 +274,13 @@ async def handle_media(message: types.Message):
             or message.audio
             or message.voice
             or message.video_note
+            or message.document
         )
+        
+        # Проверяем, если это документ, то он должен быть аудио или видео
+        if message.document and not (message.document.mime_type and message.document.mime_type.startswith(("video/", "audio/"))):
+            return
+
         if media.file_size > 20 * 1024 * 1024:
             await message.reply(
                 "Файл слишком большой для Telegram (лимит 20 МБ)."
@@ -288,6 +294,8 @@ async def handle_media(message: types.Message):
             mime_type = message.voice.mime_type or "audio/ogg"
         elif message.video:
             mime_type = message.video.mime_type or "video/mp4"
+        elif message.document:
+            mime_type = message.document.mime_type or "video/mp4"
 
         file_io = io.BytesIO()
         await bot.download(media, destination=file_io)
@@ -308,61 +316,6 @@ async def handle_media(message: types.Message):
 
     except Exception as e:
         await message.reply(f"Ошибка при обработке файла: {e}")
-
-@dp.message(F.photo)
-async def handle_photo(message: types.Message):
-    bot_info = await bot.get_me()
-    chat_id = message.chat.id
-    user_name = message.from_user.first_name or "Участник"
-    user_id = message.from_user.id
-    caption_text = message.caption or ""
-    if message.chat.type == "private" and message.from_user.id != 6628087717: return
-
-    if is_swear_message(caption_text):
-        try:
-            await message.delete()
-            warning = await message.answer(f"{user_name}, давайте без мата! 🤫")
-            await asyncio.sleep(5)
-            await warning.delete()
-        except Exception as e:
-            print(f"Ошибка при удалении мата: {e}")
-        return
-        
-    need_answer, prompt = should_respond(message, bot_info.username)
-    if not need_answer:
-        if caption_text:
-            add_to_buffer(chat_id, user_name, f"[Фото] {caption_text}")
-        return
-        
-    await bot.send_chat_action(chat_id=chat_id, action="typing")
-    base_prompt = prompt if prompt else "Опиши подробно, что изображено на этом фото."
-    context = get_chat_context(chat_id)
-    current_dt = get_current_datetime_str()
-    
-    if context:
-        final_prompt = f"[Дата и время: {current_dt}]\nКонтекст недавней беседы в чате:\n{context}\n\nПользователь {user_name} (ID: {user_id}) прислал фото с запросом: {base_prompt}"
-    else:
-        final_prompt = f"[Дата и время: {current_dt}]\nПользователь {user_name} (ID: {user_id}) прислал фото с запросом: {base_prompt}"
-        
-    try:
-        photo = message.photo[-1]
-        file_io = io.BytesIO()
-        await bot.download(photo, destination=file_io)
-        image_bytes = file_io.getvalue()
-        response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=[
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                final_prompt
-            ],
-            config=config
-        )
-        answer_text = response.text or "Пустой ответ."
-        add_to_buffer(chat_id, user_name, f"[Фото] {base_prompt}")
-        add_to_buffer(chat_id, "Бот", answer_text)
-        await message.reply(answer_text, parse_mode="Markdown")
-    except Exception as e:
-        await message.reply(f"Ошибка при анализе фото: {e}")
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
