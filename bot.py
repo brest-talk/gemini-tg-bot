@@ -317,6 +317,40 @@ async def handle_media(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка при обработке файла: {e}")
 
+@dp.message(F.voice)
+async def handle_voice(message: types.Message):
+    if message.chat.type == "private" and message.from_user.id != 6628087717:
+        return
+
+    chat_id = message.chat.id
+    user_name = message.from_user.first_name or "Участник"
+    await bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        file_io = io.BytesIO()
+        await bot.download(message.voice, destination=file_io)
+        voice_bytes = file_io.getvalue()
+
+        response = ai_client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=[
+                genai_types.Part.from_bytes(
+                    data=voice_bytes, mime_type="audio/ogg"
+                ),
+                "Транскрибируй, что сказано в этом голосовом сообщении.",
+            ],
+            config=config,
+        )
+        
+        answer_text = response.text or "Не удалось распознать голос."
+        formatted_text = f"🎙️ {user_name}: {answer_text}"
+        
+        await message.answer(formatted_text, parse_mode="Markdown")
+        await message.delete()
+
+    except Exception as e:
+        await message.reply(f"Ошибка при обработке голоса: {e}")
+
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     bot_info = await bot.get_me()
