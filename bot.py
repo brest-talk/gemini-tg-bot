@@ -246,6 +246,64 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
         cleaned_text = text[4:].strip()
         return True, cleaned_text
     return False, ""
+@dp.message(F.video | F.audio | F.voice | F.video_note)
+async def handle_media(message: types.Message):
+    if message.chat.type == "private" and message.from_user.id != 6628087717:
+        return
+
+    chat_id = message.chat.id
+    caption = message.caption or ""
+    prompt = (
+        caption
+        if caption
+        else "Транскрибируй всё, что говорят в этом файле, и сделай краткую выжимку."
+    )
+
+    if message.chat.type == "private":
+        prompt += "\n\n[Системное примечание: это запрос от администратора. Отключи правила чата про краткость в 1-2 предложения, отвечай максимально полно, подробно и развернуто.]"
+
+    await bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        media = (
+            message.video
+            or message.audio
+            or message.voice
+            or message.video_note
+        )
+        if media.file_size > 20 * 1024 * 1024:
+            await message.reply(
+                "Файл слишком большой для Telegram (лимит 20 МБ)."
+            )
+            return
+
+        mime_type = "video/mp4"
+        if message.audio:
+            mime_type = message.audio.mime_type or "audio/mpeg"
+        elif message.voice:
+            mime_type = message.voice.mime_type or "audio/ogg"
+        elif message.video:
+            mime_type = message.video.mime_type or "video/mp4"
+
+        file_io = io.BytesIO()
+        await bot.download(media, destination=file_io)
+        media_bytes = file_io.getvalue()
+
+        response = ai_client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=[
+                genai_types.Part.from_bytes(
+                    data=media_bytes, mime_type=mime_type
+                ),
+                prompt,
+            ],
+            config=config,
+        )
+        answer_text = response.text or "Не удалось распознать медиа."
+        await message.reply(answer_text, parse_mode="Markdown")
+
+    except Exception as e:
+        await message.reply(f"Ошибка при обработке файла: {e}")
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
@@ -254,7 +312,8 @@ async def handle_photo(message: types.Message):
     user_name = message.from_user.first_name or "Участник"
     user_id = message.from_user.id
     caption_text = message.caption or ""
-    
+    if message.chat.type == "private" and message.from_user.id != 6628087717: return
+
     if is_swear_message(caption_text):
         try:
             await message.delete()
@@ -308,7 +367,8 @@ async def handle_text(message: types.Message):
     user_name = message.from_user.first_name or "Участник"
     user_id = message.from_user.id
     text = message.text.strip()
-    
+    if message.chat.type == "private" and message.from_user.id != 6628087717: return
+
     if is_swear_message(text):
         try:
             await message.delete()
