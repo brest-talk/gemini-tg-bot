@@ -299,6 +299,7 @@ async def handle_post_webhook(request: web.Request):
     {
         "chat_id": 123456789,
         "text": "Текст сообщения",
+        "disable_notification": true,
         "photo_url": "https://... (опционально)",
         "button_text": "Посмотреть (опционально)",
         "button_url": "https://t.me/... (опционально)"
@@ -311,6 +312,13 @@ async def handle_post_webhook(request: web.Request):
         photo_url = data.get("photo_url")
         button_text = data.get("button_text")
         button_url = data.get("button_url")
+
+        # Приведение к boolean: поддерживает bool, строковые 'true'/'1', а также числа
+        raw_disable_notif = data.get("disable_notification", False)
+        if isinstance(raw_disable_notif, str):
+            disable_notification = raw_disable_notif.lower() in ("true", "1", "истина", "yes")
+        else:
+            disable_notification = bool(raw_disable_notif)
 
         if not chat_id or not text:
             return web.json_response({"ok": False, "error": "chat_id and text are required"}, status=400)
@@ -327,14 +335,16 @@ async def handle_post_webhook(request: web.Request):
                 photo=photo_url,
                 caption=text,
                 parse_mode="HTML",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                disable_notification=disable_notification
             )
         else:
             sent_msg = await bot.send_message(
                 chat_id=chat_id,
                 text=text,
                 parse_mode="HTML",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                disable_notification=disable_notification
             )
 
         asyncio.create_task(
