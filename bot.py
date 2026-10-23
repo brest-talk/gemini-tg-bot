@@ -21,7 +21,7 @@ ai_client = genai.Client(api_key=GEMINI_KEY)
 
 # --- НАСТРОЙКИ ДИСКА И ПАМЯТИ ---
 # Путь к диску, который вы настроили в Render (/var/data)
-DATA_DIR = "/var/data"
+DATA_DIR = "data"
 HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
 DELETED_HISTORY_FILE = os.path.join(DATA_DIR, "deleted_history.json")
 
