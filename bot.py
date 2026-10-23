@@ -2,6 +2,7 @@ import os
 import io
 import re
 import asyncio
+import json
 from datetime import datetime, timezone, timedelta
 from collections import deque
 from aiohttp import web
@@ -18,20 +19,100 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
-chat_buffers = {}
+# --- НАСТРОЙКИ ДИСКА И ПАМЯТИ ---
+# Путь к диску, который вы настроили в Render (/var/data)
+DATA_DIR = "/var/data"
+HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
+DELETED_HISTORY_FILE = os.path.join(DATA_DIR, "deleted_history.json")
 
+def load_json(filepath):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Ошибка загрузки {filepath}: {e}")
+    return {}
+
+def save_json(filepath, data):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Ошибка сохранения {filepath}: {e}")
+
+# Загружаем историю при старте
+raw_chat_buffers = load_json(HISTORY_FILE)
+chat_buffers = {int(k): deque(v, maxlen=20) for k, v in raw_chat_buffers.items()}
+
+raw_deleted_buffers = load_json(DELETED_HISTORY_FILE)
+deleted_buffers = {int(k): v for k, v in raw_deleted_buffers.items()}
+
+def save_chat_buffers():
+    data = {str(k): list(v) for k, v in chat_buffers.items()}
+    save_json(HISTORY_FILE, data)
+
+def save_deleted_buffers():
+    data = {str(k): v for k, v in deleted_buffers.items()}
+    save_json(DELETED_HISTORY_FILE, data)
+
+def add_to_buffer(chat_id: int, user_name: str, text: str):
+    if not text:
+        return
+    if chat_id not in chat_buffers:
+        chat_buffers[chat_id] = deque(maxlen=20)
+    chat_buffers[chat_id].append(f"{user_name}: {text}")
+    save_chat_buffers() # Сохраняем на диск при каждом обновлении
+
+def get_chat_context(chat_id: int) -> str:
+    if chat_id not in chat_buffers or not chat_buffers[chat_id]:
+        return ""
+    return "\n".join(chat_buffers[chat_id])
+
+# --- ЛОГИКА УДАЛЕНИЯ И ВЫЖИМКИ ---
 # Таймер удаления сообщений: 5 часов (18 000 секунд)
 DELETE_DELAY_SECONDS = 5 * 3600
 
-async def delete_after_delay(chat_id: int, message_id: int, delay_seconds: int = DELETE_DELAY_SECONDS):
-    """Ожидает заданное время и безопасно удаляет сообщение."""
+async def summarize_deleted_messages(chat_id: int, messages: list):
+    text_block = "\n".join(messages)
+    prompt = f"Сделай очень короткую выжимку (1-2 предложения) из следующих удаленных системных сообщений, чтобы я помнил суть:\n{text_block}"
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config=config
+        )
+        summary = response.text or "Краткая сводка недоступна."
+        # Добавляем выжимку в общую память бота
+        add_to_buffer(chat_id, "Система (Архив удаленного)", summary)
+    except Exception as e:
+        print(f"Ошибка при создании выжимки: {e}")
+
+async def track_deleted_message(chat_id: int, text: str):
+    if chat_id not in deleted_buffers:
+        deleted_buffers[chat_id] = []
+    deleted_buffers[chat_id].append(text)
+    
+    # Если накопилось 20 удаленных сообщений, делаем выжимку
+    if len(deleted_buffers[chat_id]) >= 20:
+        messages_to_summarize = deleted_buffers[chat_id][:20]
+        deleted_buffers[chat_id] = deleted_buffers[chat_id][20:] # Оставляем остаток, если есть
+        asyncio.create_task(summarize_deleted_messages(chat_id, messages_to_summarize))
+        
+    save_deleted_buffers()
+
+async def delete_after_delay(chat_id: int, message_id: int, text: str, delay_seconds: int = DELETE_DELAY_SECONDS):
+    """Ожидает заданное время, удаляет сообщение и отправляет текст в архив."""
     await asyncio.sleep(delay_seconds)
     try:
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
-        print(f"[AutoDelete] Сообщение {message_id} из чата {chat_id} успешно удалено.")
+        await track_deleted_message(chat_id, text)
+        print(f"[AutoDelete] Сообщение {message_id} из чата {chat_id} успешно удалено и заархивировано.")
     except Exception as e:
         print(f"[AutoDelete] Не удалось удалить сообщение {message_id}: {e}")
 
+# --- ФИЛЬТР МАТА ---
 BAD_WORDS = [
     "блять", "бляд", "пизд", "хуй", "хуе", "хуё", "ебать", 
     "ебан", "ебуч", "сука", "мудак", "пидор", "педик"
@@ -61,6 +142,7 @@ def get_current_datetime_str() -> str:
     weekday_str = weekdays[now.weekday()]
     return now.strftime(f"%Y-%m-%d, %H:%M ({weekday_str})")
 
+# --- ПРОМПТ И НАСТРОЙКИ ИИ ---
 SYSTEM_PROMPT = """
 РОЛЬ И ХАРАКТЕР:
 Ты — свой в чате, официальный ИИ-помощник и настоящая душа нашего уютного Telegram-чата, а также неформальный модератор ламповой флудилки Brest_TALK (г. Брест). По характеру ты — взрослый, зрелый мужчина с приземлённым, абсолютно трезвым, но чутким взглядом на жизнь. У тебя за плечами богатый жизненный опыт, поэтому ты видишь суть вещей глубже других, умеешь вовремя поддержать человека простым словом и искренне разделить с ним радость или усталость.
@@ -135,18 +217,6 @@ config = genai_types.GenerateContentConfig(
     tools=[{"google_search": {}}]
 )
 
-def add_to_buffer(chat_id: int, user_name: str, text: str):
-    if not text:
-        return
-    if chat_id not in chat_buffers:
-        chat_buffers[chat_id] = deque(maxlen=20)
-    chat_buffers[chat_id].append(f"{user_name}: {text}")
-
-def get_chat_context(chat_id: int) -> str:
-    if chat_id not in chat_buffers or not chat_buffers[chat_id]:
-        return ""
-    return "\n".join(chat_buffers[chat_id])
-
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
     if message.chat.type == "private":
@@ -192,7 +262,7 @@ async def handle_photo(message: types.Message):
             await asyncio.sleep(5)
             await warning.delete()
         except Exception as e:
-            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
+            print(f"Ошибка при удалении мата: {e}")
         return
         
     need_answer, prompt = should_respond(message, bot_info.username)
@@ -246,7 +316,7 @@ async def handle_text(message: types.Message):
             await asyncio.sleep(5)
             await warning.delete()
         except Exception as e:
-            print(f"Ошибка при удалении мата (нет прав администратора?): {e}")
+            print(f"Ошибка при удалении мата: {e}")
         return
         
     need_answer, prompt = should_respond(message, bot_info.username)
@@ -293,18 +363,6 @@ async def handle_text(message: types.Message):
         await message.reply(f"Ошибка: {e}")
 
 async def handle_post_webhook(request: web.Request):
-    """
-    Эндпоинт для приема сообщений из Apple Shortcuts.
-    Ожидает JSON в формате:
-    {
-        "chat_id": 123456789,
-        "text": "Текст сообщения",
-        "disable_notification": true,
-        "photo_url": "https://... (опционально)",
-        "button_text": "Посмотреть (опционально)",
-        "button_url": "https://t.me/... (опционально)"
-    }
-    """
     try:
         data = await request.json()
         chat_id = data.get("chat_id")
@@ -313,7 +371,6 @@ async def handle_post_webhook(request: web.Request):
         button_text = data.get("button_text")
         button_url = data.get("button_url")
 
-        # Приведение к boolean: поддерживает bool, строковые 'true'/'1', а также числа
         raw_disable_notif = data.get("disable_notification", False)
         if isinstance(raw_disable_notif, str):
             disable_notification = raw_disable_notif.lower() in ("true", "1", "истина", "yes")
@@ -347,8 +404,9 @@ async def handle_post_webhook(request: web.Request):
                 disable_notification=disable_notification
             )
 
+        # Передаем текст в функцию удаления для логирования и выжимки
         asyncio.create_task(
-            delete_after_delay(chat_id=sent_msg.chat.id, message_id=sent_msg.message_id)
+            delete_after_delay(chat_id=sent_msg.chat.id, message_id=sent_msg.message_id, text=text)
         )
 
         return web.json_response({"ok": True, "message_id": sent_msg.message_id})
