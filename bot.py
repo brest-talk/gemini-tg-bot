@@ -277,7 +277,7 @@ async def handle_voice(message: types.Message):
         )
         
         answer_text = response.text or "Не удалось распознать голос."
-        formatted_text = f"🎙️ {user_name}: {answer_text}"
+        formatted_text = f"{user_name} — говорит: {answer_text}"
         
         await message.answer(formatted_text, parse_mode="Markdown")
         await message.delete()
