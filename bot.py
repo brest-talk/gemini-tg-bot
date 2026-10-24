@@ -2,6 +2,7 @@ import os
 import io
 import re
 import asyncio
+import html
 import json
 from datetime import datetime, timezone, timedelta
 from collections import deque
@@ -255,14 +256,15 @@ def should_respond(message: types.Message, bot_username: str) -> tuple[bool, str
         return True, cleaned_text
     return False, ""
 
+import html
+
 @dp.message(F.voice)
 async def handle_voice(message: types.Message):
     if message.chat.type == "private" and message.from_user.id != 6628087717:
         return
 
     chat_id = message.chat.id
-    # Берем имя пользователя, если скрыто — никнейм или стандартную подпись
-    user_name = message.from_user.first_name or message.from_user.username or "Участник"
+    user_name = message.from_user.first_name or "Участник"
     await bot.send_chat_action(chat_id=chat_id, action="typing")
 
     try:
@@ -271,25 +273,31 @@ async def handle_voice(message: types.Message):
         voice_bytes = file_io.getvalue()
 
         response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=[
                 genai_types.Part.from_bytes(
                     data=voice_bytes, mime_type="audio/ogg"
                 ),
-                "Транскрибируй, что сказано в этом голосовом сообщении. Выдай только текст без комментариев.",
+                "Транскрибируй, что сказано в этом голосовом сообщении. Напиши только распознанный текст без кавычек и комментариев.",
             ],
             config=config,
         )
 
-        recognized_text = response.text.strip()
+        answer_text = response.text.strip() if response.text else "Не удалось распознать голос."
 
-        # Формируем сообщение со смайликами прямо в коде:
-        reply_text = f"🗣️ <b>{user_name}</b> говорит:\n💬 «{recognized_text}»"
+        # Экранируем символы, чтобы Telegram не падал от разметки
+        safe_name = html.escape(user_name)
+        safe_text = html.escape(answer_text)
 
-        await message.reply(reply_text, parse_mode="HTML")
+        # Четкое визуальное оформление с эмодзи
+        formatted_text = f"🗣️ <b>{safe_name}</b> говорит:\n💬 {safe_text}"
+
+        await message.answer(formatted_text, parse_mode="HTML")
+        await message.delete()
 
     except Exception as e:
-        print(f"Ошибка распознавания: {e}")
+        print(f"Ошибка при обработке голоса: {e}")
+        await message.reply(f"⚠️ Ошибка при обработке голоса: {e}")
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
