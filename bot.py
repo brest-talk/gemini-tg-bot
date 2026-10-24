@@ -261,7 +261,8 @@ async def handle_voice(message: types.Message):
         return
 
     chat_id = message.chat.id
-    user_name = message.from_user.first_name or "Участник"
+    # Берем имя пользователя, если скрыто — никнейм или стандартную подпись
+    user_name = message.from_user.first_name or message.from_user.username or "Участник"
     await bot.send_chat_action(chat_id=chat_id, action="typing")
 
     try:
@@ -270,24 +271,25 @@ async def handle_voice(message: types.Message):
         voice_bytes = file_io.getvalue()
 
         response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
+            model="gemini-2.5-flash",
             contents=[
                 genai_types.Part.from_bytes(
                     data=voice_bytes, mime_type="audio/ogg"
                 ),
-                "Транскрибируй, что сказано в этом голосовом сообщении.",
+                "Транскрибируй, что сказано в этом голосовом сообщении. Выдай только текст без комментариев.",
             ],
             config=config,
         )
-        
-        answer_text = response.text or "Не удалось распознать голос."
-        formatted_text = f"{user_name} говорит: 🗣️ «{text}»"
-        
-        await message.answer(formatted_text, parse_mode="Markdown")
-        await message.delete()
+
+        recognized_text = response.text.strip()
+
+        # Формируем сообщение со смайликами прямо в коде:
+        reply_text = f"🗣️ <b>{user_name}</b> говорит:\n💬 «{recognized_text}»"
+
+        await message.reply(reply_text, parse_mode="HTML")
 
     except Exception as e:
-        await message.reply(f"Ошибка при обработке голоса: {e}")
+        print(f"Ошибка распознавания: {e}")
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
