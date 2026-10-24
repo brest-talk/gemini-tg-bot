@@ -290,7 +290,7 @@ async def handle_voice(message: types.Message):
         safe_text = html.escape(answer_text)
 
         # Четкое визуальное оформление с эмодзи
-        formatted_text = f"🗣️ <b>{safe_name}</b> говорит:\n💬 {safe_text}"
+        formatted_text = f" <b>{safe_name}</b> говорит:\n🗣️ {safe_text}"
 
         await message.answer(formatted_text, parse_mode="HTML")
         await message.delete()
